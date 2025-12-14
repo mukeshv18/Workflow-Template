@@ -16,60 +16,7 @@ on:
         required: true
 
 jobs:
-  build-and-publish:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Java (Temurin)
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Build project (Maven or Gradle)
-        run: |
-          set -e
-          # If pom.xml exists use Maven, otherwise try Gradle.
-          if [ -f pom.xml ]; then
-            echo "Building with Maven..."
-            if [ "${{ inputs.skip_tests }}" = "true" ]; then
-              mvn -B -DskipTests package
-            else
-              mvn -B package
-            fi
-          elif [ -f build.gradle ] || [ -f build.gradle.kts ]; then
-            echo "Building with Gradle..."
-            chmod +x ./gradlew || true
-            if [ "${{ inputs.skip_tests }}" = "true" ]; then
-              ./gradlew build -x test
-            else
-              ./gradlew build
-            fi
-          else
-            echo "No pom.xml or build.gradle found. Skipping build step (ensure a build file exists)."
-          fi
-
-      - name: Find first produced JAR
-        id: find_jar
-        run: |
-          set -e
-          echo "Searching for a .jar file produced by the build..."
-          # Ignore common directories that may contain unrelated jars
-          JAR=$(find . -type f -name "*.jar" -not -path "./.gradle/*" -not -path "./**/original-*.jar" \
-            | grep -vE "sources|javadoc" || true)
-          JAR=$(echo "$JAR" | head -n 1 || true)
-          if [ -z "$JAR" ]; then
-            echo "No .jar file found. Here is a full file list for debugging:"
-            find . -maxdepth 4 -type f -print
-            echo "jar_path="
-            # Fail the job so the user sees the problem
-            exit 1
-          fi
-          echo "Found jar: $JAR"
-          echo "jar_path=$JAR" >> $GITHUB_OUTPUT
-
+  Zip-and-publish:
       - name: Package found JAR into a zip
         id: create_zip
         run: |
