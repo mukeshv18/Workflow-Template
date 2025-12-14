@@ -1,36 +1,144 @@
-# This is a basic workflow to help you get started with Actions
 
-name: CI
+name: Unit Tests (Reusable)
 
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  workflow_call:
+    inputs:
+      type:
+        description: "Build type to test with: maven | gradle | npm"
+        required: false
+        type: string
+        default: maven
+      maven_cmd:
+        description: "Maven command (override if needed)"
+        required: false
+        type: string
+        default: "mvn -B"
+      working-directory:
+        description: "Directory to run tests in"
+        required: false
+        type: string
+        default: "."
+      java-version:
+        description: "Java version for Maven/Gradle"
+        required: false
+        type: string
+        default: "17"
+      node-version:
+        description: "Node.js version for npm"
+        required: false
+        type: string
+        default: "20"
+    secrets:
+      NPM_TOKEN:
+        description: "Optional npm token for private registry access"
+        required: false
 
-  # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch:
-
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
-  build:
-    # The type of runner that the job will run on
+  run-tests:
+    # Switch to 'windows-latest' if you need Windows and batch tooling.
     runs-on: ubuntu-latest
+    env:
+      MAVEN_CMD: ${{ inputs.maven_cmd }}
+      BUILD_TYPE: ${{ inputs.type }}
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v4
+      - name: 🧾 Checkout
+        uses: actions/checkout@v4
 
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Hello, world!
-
-      # Runs a set of commands using the runners shell
-      - name: Run a multi-line script
+      - name: 🟦 Start Unit Test Stage
         run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
+          echo "::group::Unit Test Stage"
+          echo "Build type: '${BUILD_TYPE}'"
+          echo "Working directory: '${{ inputs.working-directory }}'"
+          echo "::endgroup::"
+
+      - name: ✅ Validate build type
+        run: |
+          case "$BUILD_TYPE" in
+            maven|gradle|npm) echo "Supported build type: $BUILD_TYPE";;
+            *)
+              echo "::error::Unsupported build type: $BUILD_TYPE"
+              exit 1
+              ;;
+          esac
+
+      # ---------- Maven ----------
+      - name: ☕ Setup Java (Maven)
+        if: ${{ inputs.type == 'maven' }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+
+      - name: 🔧 Maven Test
+        if: ${{ inputs.type == 'maven' }}
+        run: |
+          set -euo pipefail
+          echo "Running: $MAVEN_CMD test"
+          $MAVEN_CMD test
+        # If you need to pass settings.xml or profiles, you can add them here.
+
+      # ---------- Gradle ----------
+      - name: ☕ Setup Java (Gradle)
+        if: ${{ inputs.type == 'gradle' }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: gradle
+
+      - name: 🔧 Gradle Test
+        if: ${{ inputs.type == 'gradle' }}
+        run: |
+          set -euo pipefail
+          if [ -x "./gradlew" ]; then
+            echo "Using Gradle wrapper"
+            ./gradlew test --stacktrace
+          else
+            echo "Using system Gradle"
+            gradle test --stacktrace
+          fi
+
+      # ---------- npm ----------
+      - name: 🟩 Setup Node.js
+        if: ${{ inputs.type == 'npm' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: "npm"
+
+      - name: 🔐 Configure npm auth (optional)
+        if: ${{ inputs.type == 'npm' && secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+
+      - name: 📦 Install dependencies (npm)
+        if: ${{ inputs.type == 'npm' }}
+        run: |
+          set -euo pipefail
+          # Prefer reproducible installs; fallback if package-lock is absent
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: 🧪 npm test
+        if: ${{ inputs.type == 'npm' }}
+        run: |
+          set -euo pipefail
+          npm test
+
+      - name: ✅ Unit tests passed
+        if: ${{ success() }}
+        run: echo "Unit tests passed"
+
+      - name: ❌ Unit tests failed
+               if: ${{ failure() }}
