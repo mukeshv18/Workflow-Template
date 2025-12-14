@@ -1,33 +1,45 @@
+  - name: Checkout repository (only if we need to search the repo)
+    if: ${{ inputs.uploaded_artifact_name == '' }}
+    uses: actions/checkout@v4
 
-``yaml name=.github/workflows/CI.yml url=https://github.com/mukeshv18/sample-app-1/blob/main/.github/workflows/CI.yml
-name: CI
+  - name: Find the JAR file
+    id: find_jar
+    run: |
+      set -e
+      echo "Searching for jar..."
+      # Priority: explicit jar_path input -> downloaded_artifact -> workspace search
+      if [ -n "${{ inputs.jar_path }}" ]; then
+        JAR="${{ inputs.jar_path }}"
+      elif [ -d downloaded_artifact ]; then
+        JAR=$(find downloaded_artifact -type f -name "*.jar" | grep -vE "sources|javadoc" | head -n 1 || true)
+      else
+        JAR=$(find . -type f -name "*.jar" -not -path "./.gradle/*" | grep -vE "sources|javadoc" | head -n 1 || true)
+      fi
 
-on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-  workflow_dispatch:
+      if [ -z "$JAR" ]; then
+        echo "No .jar file found. To use this workflow reliably either:"
+        echo " - Make your build job upload the JAR as an artifact and pass uploaded_artifact_name;"
+        echo " - Or pass jar_path with the path to the JAR."
+        exit 1
+      fi
 
-jobs:
-  # Call the reusable Build workflow (you already have this in Workflow-Template)
-  build:
-    uses: mukeshv18/Workflow-Template/.github/workflows/Build.yml@main
+      echo "Found jar: $JAR"
+      echo "jar_path=$JAR" >> $GITHUB_OUTPUT
 
-  # Zip and publish the jar produced by the build
-  zip-and-publish:
-    needs: build
-    uses: mukeshv18/Workflow-Template/.github/workflows/ZipArtifact.yml@main
-    # Two ways to make this work — choose one:
-    # 1) Preferred: Have your reusable Build.yml upload the produced JAR as an artifact named "built-jar".
-    #    Then call ZipArtifact with uploaded_artifact_name: built-jar
-    # 2) If Build.yml leaves the jar in the workspace and you want to re-checkout and search, leave uploaded_artifact_name empty.
+  - name: Package JAR into a zip
+    id: create_zip
+    run: |
+      set -e
+      mkdir -p artifact
+      cp "${{ steps.find_jar.outputs.jar_path }}" artifact/
+      ZIP_NAME="${{ github.job }}-${{ github.run_number }}.zip"
+      cd artifact
+      zip -r "$ZIP_NAME" .
+      echo "zip_path=artifact/$ZIP_NAME" >> $GITHUB_OUTPUT
+
+  - name: Upload zipped artifact
+    uses: actions/upload-artifact@v4
     with:
-      # Option A (recommended if Build.yml uploads the jar):
-      uploaded_artifact_name: built-jar
-      artifact_name: application-jar-zip
-      retention_days: 7
-      # Option B (if you want the zip workflow to search the workspace / or you can pass jar_path):
-      # uploaded_artifact_name: ''
-      # jar_path: 'target/my-app-1.0.0.jar'
-    secrets: inherit
+      name: ${{ inputs.artifact_name }}
+      path: ${{ steps.create_zip.outputs.zip_path }}
+      retention-days: ${{ inputs.retention_days }}
