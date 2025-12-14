@@ -1,10 +1,19 @@
-name: Publish JAR Artifact
+name: Publish JAR Artifact (reusable)
 
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      artifact_name:
+        description: 'Name for the uploaded artifact (zip).'
+        required: false
+        default: 'application-jar-zip'
+      skip_tests:
+        description: 'If "true", skip running tests during build.'
+        required: false
+        default: 'true'
+    secrets:
+      GITHUB_TOKEN:
+        required: true
 
 jobs:
   build-and-publish:
@@ -21,14 +30,23 @@ jobs:
 
       - name: Build project (Maven or Gradle)
         run: |
-          # If pom.xml exists use Maven, otherwise try Gradle. Adapt commands if you need tests.
+          set -e
+          # If pom.xml exists use Maven, otherwise try Gradle.
           if [ -f pom.xml ]; then
             echo "Building with Maven..."
-            mvn -B -DskipTests package
+            if [ "${{ inputs.skip_tests }}" = "true" ]; then
+              mvn -B -DskipTests package
+            else
+              mvn -B package
+            fi
           elif [ -f build.gradle ] || [ -f build.gradle.kts ]; then
             echo "Building with Gradle..."
             chmod +x ./gradlew || true
-            ./gradlew build -x test
+            if [ "${{ inputs.skip_tests }}" = "true" ]; then
+              ./gradlew build -x test
+            else
+              ./gradlew build
+            fi
           else
             echo "No pom.xml or build.gradle found. Skipping build step (ensure a build file exists)."
           fi
@@ -67,6 +85,6 @@ jobs:
       - name: Upload zipped artifact
         uses: actions/upload-artifact@v4
         with:
-          name: application-jar-zip
+          name: ${{ inputs.artifact_name }}
           path: ${{ steps.create_zip.outputs.zip_path }}
           retention-days: 7
