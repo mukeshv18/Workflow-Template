@@ -1,1 +1,72 @@
-test
+name: Publish JAR Artifact
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Build project (Maven or Gradle)
+        run: |
+          # If pom.xml exists use Maven, otherwise try Gradle. Adapt commands if you need tests.
+          if [ -f pom.xml ]; then
+            echo "Building with Maven..."
+            mvn -B -DskipTests package
+          elif [ -f build.gradle ] || [ -f build.gradle.kts ]; then
+            echo "Building with Gradle..."
+            chmod +x ./gradlew || true
+            ./gradlew build -x test
+          else
+            echo "No pom.xml or build.gradle found. Skipping build step (ensure a build file exists)."
+          fi
+
+      - name: Find first produced JAR
+        id: find_jar
+        run: |
+          set -e
+          echo "Searching for a .jar file produced by the build..."
+          # Ignore common directories that may contain unrelated jars
+          JAR=$(find . -type f -name "*.jar" -not -path "./.gradle/*" -not -path "./**/original-*.jar" \
+            | grep -vE "sources|javadoc" || true)
+          JAR=$(echo "$JAR" | head -n 1 || true)
+          if [ -z "$JAR" ]; then
+            echo "No .jar file found. Here is a full file list for debugging:"
+            find . -maxdepth 4 -type f -print
+            echo "jar_path="
+            # Fail the job so the user sees the problem
+            exit 1
+          fi
+          echo "Found jar: $JAR"
+          echo "jar_path=$JAR" >> $GITHUB_OUTPUT
+
+      - name: Package found JAR into a zip
+        id: create_zip
+        run: |
+          set -e
+          mkdir -p artifact
+          cp "${{ steps.find_jar.outputs.jar_path }}" artifact/
+          ZIP_NAME="${{ github.job }}-${{ github.run_number }}.zip"
+          cd artifact
+          zip -r "$ZIP_NAME" .
+          # expose zip path as output
+          echo "zip_path=artifact/$ZIP_NAME" >> $GITHUB_OUTPUT
+
+      - name: Upload zipped artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: application-jar-zip
+          path: ${{ steps.create_zip.outputs.zip_path }}
+          retention-days: 7
