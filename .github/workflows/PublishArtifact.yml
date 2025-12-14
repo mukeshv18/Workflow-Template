@@ -1,31 +1,51 @@
-# Maven build workflow template
-# Based on your current Build.yml, updated to be a reusable CI workflow for Maven projects.
-name: CI - Maven Build
 
-# Controls when the workflow will run
+# .github/workflows/PublishArtifact.yml
+name: Publish Artifact
+
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-
-  # Allows you to run this workflow manually from the Actions tab
   workflow_call:
+    inputs:
+      artifact_name:
+        description: 'Name to use for the uploaded zipped artifact'
+        type: string
+        required: true
+      retention_days:
+        description: 'Retention period (days) for the uploaded artifact'
+        type: number
+        default: 14
+      uploaded_artifact_name:
+        description: 'Name of an existing artifact to download (produced by a previous job)'
+        type: string
+        default: ''
+      jar_path:
+        description: 'Explicit path to the JAR to package (if you don’t want auto-discovery)'
+        type: string
+        default: ''
+    secrets: {}  # inherit is set by the caller; declare any specific secrets here if needed
 
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository (only if we need to search the repo)
-        if: ${{ inputs.uploaded_artifact_name == '' }}
+        if: ${{ inputs.uploaded_artifact_name == '' && inputs.jar_path == '' }}
         uses: actions/checkout@v4
-    
+
+      - name: Download artifact (if provided)
+        if: ${{ inputs.uploaded_artifact_name != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.uploaded_artifact_name }}
+          path: downloaded_artifact
+
       - name: Find the JAR file
         id: find_jar
+        shell: bash
         run: |
           set -e
-          echo "Searching for jar..."
+          echo "Searching for JAR..."
+
           # Priority: explicit jar_path input -> downloaded_artifact -> workspace search
           if [ -n "${{ inputs.jar_path }}" ]; then
             JAR="${{ inputs.jar_path }}"
@@ -34,31 +54,32 @@ jobs:
           else
             JAR=$(find . -type f -name "*.jar" -not -path "./.gradle/*" | grep -vE "sources|javadoc" | head -n 1 || true)
           fi
-    
+
           if [ -z "$JAR" ]; then
-            echo "No .jar file found. To use this workflow reliably either:"
-            echo " - Make your build job upload the JAR as an artifact and pass uploaded_artifact_name;"
-            echo " - Or pass jar_path with the path to the JAR."
+            echo "No .jar file found."
+            echo "To use this workflow reliably either:"
+            echo " - Make your build job upload the JAR as an artifact and pass 'uploaded_artifact_name';"
+            echo " - Or pass 'jar_path' with the path to the JAR."
             exit 1
           fi
-    
-          echo "Found jar: $JAR"
-          echo "jar_path=$JAR" >> $GITHUB_OUTPUT
-    
+
+          echo "Found JAR: $JAR"
+          echo "jar_path=$JAR" >> "$GITHUB_OUTPUT"
+
       - name: Package JAR into a zip
         id: create_zip
+        shell: bash
         run: |
           set -e
           mkdir -p artifact
           cp "${{ steps.find_jar.outputs.jar_path }}" artifact/
           ZIP_NAME="${{ github.job }}-${{ github.run_number }}.zip"
-          cd artifact
-          zip -r "$ZIP_NAME" .
-          echo "zip_path=artifact/$ZIP_NAME" >> $GITHUB_OUTPUT
-    
+          (cd artifact && zip -r "$ZIP_NAME" .)
+          echo "zip_path=artifact/$ZIP_NAME" >> "$GITHUB_OUTPUT"
+
       - name: Upload zipped artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.artifact_name }}
           path: ${{ steps.create_zip.outputs.zip_path }}
-          retention-days: ${{ inputs.retention_days }}
+         
