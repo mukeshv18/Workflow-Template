@@ -1,37 +1,33 @@
-name: Publish JAR Artifact (reusable)
+
+``yaml name=.github/workflows/CI.yml url=https://github.com/mukeshv18/sample-app-1/blob/main/.github/workflows/CI.yml
+name: CI
 
 on:
-  workflow_call:
-    inputs:
-      artifact_name:
-        description: 'Name for the uploaded artifact (zip).'
-        required: false
-        default: 'application-jar-zip'
-      skip_tests:
-        description: 'If "true", skip running tests during build.'
-        required: false
-        default: 'true'
-    secrets:
-      GITHUB_TOKEN:
-        required: true
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
-  Zip-and-publish:
-      - name: Package found JAR into a zip
-        id: create_zip
-        run: |
-          set -e
-          mkdir -p artifact
-          cp "${{ steps.find_jar.outputs.jar_path }}" artifact/
-          ZIP_NAME="${{ github.job }}-${{ github.run_number }}.zip"
-          cd artifact
-          zip -r "$ZIP_NAME" .
-          # expose zip path as output
-          echo "zip_path=artifact/$ZIP_NAME" >> $GITHUB_OUTPUT
+  # Call the reusable Build workflow (you already have this in Workflow-Template)
+  build:
+    uses: mukeshv18/Workflow-Template/.github/workflows/Build.yml@main
 
-      - name: Upload zipped artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ inputs.artifact_name }}
-          path: ${{ steps.create_zip.outputs.zip_path }}
-          retention-days: 7
+  # Zip and publish the jar produced by the build
+  zip-and-publish:
+    needs: build
+    uses: mukeshv18/Workflow-Template/.github/workflows/ZipArtifact.yml@main
+    # Two ways to make this work — choose one:
+    # 1) Preferred: Have your reusable Build.yml upload the produced JAR as an artifact named "built-jar".
+    #    Then call ZipArtifact with uploaded_artifact_name: built-jar
+    # 2) If Build.yml leaves the jar in the workspace and you want to re-checkout and search, leave uploaded_artifact_name empty.
+    with:
+      # Option A (recommended if Build.yml uploads the jar):
+      uploaded_artifact_name: built-jar
+      artifact_name: application-jar-zip
+      retention_days: 7
+      # Option B (if you want the zip workflow to search the workspace / or you can pass jar_path):
+      # uploaded_artifact_name: ''
+      # jar_path: 'target/my-app-1.0.0.jar'
+    secrets: inherit
